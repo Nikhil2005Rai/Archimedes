@@ -43,6 +43,20 @@ def test_tavily_search_success() -> None:
             assert "FastAPI framework, high performance" in result
 
 
+def test_tavily_search_normalizes_max_results() -> None:
+    tool = TavilySearchTool()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"results": []}
+
+    with patch.object(settings, "tavily_api_key", "tvly-test-key"):
+        with patch("httpx.post", return_value=mock_resp) as mock_post:
+            tool.run({"query": "FastAPI docs", "max_results": "20"})
+
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["max_results"] == 10
+
+
 def test_tavily_search_timeout() -> None:
     tool = TavilySearchTool()
     with patch.object(settings, "tavily_api_key", "tvly-test-key"):

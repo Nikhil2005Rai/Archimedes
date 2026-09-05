@@ -1,6 +1,7 @@
 import logging
 import re
 from dataclasses import dataclass
+from app.agents.source_attribution import append_web_sources
 from app.providers.base import LLMMessage, LLMProvider
 from app.tools.registry import ToolRegistry
 
@@ -92,17 +93,21 @@ class DataAnalystAgent:
                     ]
                 )
                 final_answer = self._prepend_missing_chart_block(final_response.content, second_tool_result.content)
+                tool_name = f"{response.tool_call.name}, {follow_up_response.tool_call.name}"
+                tool_output = f"{first_tool_result.content}\n\n{second_tool_result.content}"
+                final_answer = append_web_sources(final_answer, tool_name, tool_output)
                 return DataAnalystResult(
                     answer=final_answer,
-                    tool_name=f"{response.tool_call.name}, {follow_up_response.tool_call.name}",
+                    tool_name=tool_name,
                     tool_arguments={
                         response.tool_call.name: response.tool_call.arguments,
                         follow_up_response.tool_call.name: follow_up_response.tool_call.arguments,
                     },
-                    tool_output=f"{first_tool_result.content}\n\n{second_tool_result.content}",
+                    tool_output=tool_output,
                 )
 
         final_answer = self._prepend_missing_chart_block(follow_up_response.content, first_tool_result.content)
+        final_answer = append_web_sources(final_answer, response.tool_call.name, first_tool_result.content)
         return DataAnalystResult(
             answer=final_answer,
             tool_name=response.tool_call.name,

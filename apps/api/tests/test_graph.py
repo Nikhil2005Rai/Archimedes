@@ -79,6 +79,22 @@ def test_graph_routes_disclaimer_shaped_planner_fallback_to_research_agent() -> 
     assert len(provider.calls) == 2
 
 
+def test_graph_routes_live_web_intent_to_research_even_if_planner_answers_directly() -> None:
+    provider = ScriptedGraphProvider(
+        [
+            LLMResponse(content="ANSWER: I will answer from memory."),
+            LLMResponse(content="Research agent handled the latest request."),
+        ]
+    )
+    graph = MultiAgentGraph(llm_provider=provider, tools=ToolRegistry([]), agents=build_agent_registry())
+
+    result = graph.run("What is the latest NVIDIA news today?")
+
+    assert result.answer == "Research agent handled the latest request."
+    assert result.agent_name == "research"
+    assert len(provider.calls) == 2
+
+
 def test_graph_routes_to_coding_agent() -> None:
     provider = ScriptedGraphProvider(
         [

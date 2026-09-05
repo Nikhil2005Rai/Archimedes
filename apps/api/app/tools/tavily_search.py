@@ -26,8 +26,12 @@ class TavilySearchTool:
         return ToolResult(content=result_text)
 
     def run(self, arguments: dict) -> str:
-        query = arguments.get("query", "")
-        max_results = arguments.get("max_results", 5)
+        query = str(arguments.get("query", ""))
+        try:
+            max_results = int(arguments.get("max_results", 5))
+        except (TypeError, ValueError):
+            max_results = 5
+        max_results = min(max(max_results, 1), 10)
 
         if not query.strip():
             return "Error: Search query cannot be empty."

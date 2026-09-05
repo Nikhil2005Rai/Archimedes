@@ -159,7 +159,10 @@ class FakeTool:
 
 
 def test_data_analyst_chains_web_search_to_chart_generator_and_extracts_chart_block():
-    web_search = FakeTool("web_search", "Latest levels: Jan=10, Feb=12.")
+    web_search = FakeTool(
+        "web_search",
+        "Web Search Results:\n1. [Hydrology Report](https://example.com/hydro)\nLatest levels: Jan=10, Feb=12.",
+    )
     chart_generator = FakeTool(
         "chart_generator",
         '```json:chart\n{"chart_type":"line","title":"Water levels","data":[{"month":"Jan","level":10}],"x_key":"month","y_keys":["level"]}\n```\n\nGenerated LINE chart: **Water levels** with 1 data points.',
@@ -197,3 +200,25 @@ def test_data_analyst_chains_web_search_to_chart_generator_and_extracts_chart_bl
     assert result.answer.startswith("```json:chart\n")
     assert "Generated LINE chart" not in result.answer
     assert "Here is the requested chart." in result.answer
+    assert "Sources:" in result.answer
+    assert "[Hydrology Report](https://example.com/hydro)" in result.answer
+
+
+def test_devops_agent_appends_sources_for_web_search_tool():
+    web_search = FakeTool(
+        "web_search",
+        "Web Search Results:\n1. [Kubernetes Docs](https://kubernetes.io/docs/home/)\nCurrent docs.",
+    )
+    tools = ToolRegistry([web_search])
+    provider = ScriptedLLMProvider(
+        [
+            LLMResponse(content="", tool_call=LLMToolCall(name="web_search", arguments={"query": "kubernetes docs"})),
+            LLMResponse(content="Use the current Kubernetes guidance."),
+        ]
+    )
+
+    agent = DevOpsAgent(provider, tools)
+    result = agent.run("Find current Kubernetes deployment guidance")
+
+    assert result.tool_name == "web_search"
+    assert result.answer.endswith("1. [Kubernetes Docs](https://kubernetes.io/docs/home/)")

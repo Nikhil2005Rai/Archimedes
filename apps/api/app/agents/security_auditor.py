@@ -1,4 +1,5 @@
 import logging
+from app.agents.source_attribution import append_web_sources
 from app.providers.base import LLMMessage, LLMProvider
 from app.tools.registry import ToolRegistry
 from app.agents.planner import PlannerResult
@@ -60,8 +61,13 @@ class SecurityAuditorAgent:
                     ),
                 ]
                 final_response = self.llm_provider.generate(messages=follow_up_messages)
+                answer = append_web_sources(
+                    final_response.content,
+                    response.tool_call.name,
+                    tool_result.content,
+                )
                 return PlannerResult(
-                    answer=final_response.content,
+                    answer=answer,
                     tool_name=response.tool_call.name,
                     tool_arguments=response.tool_call.arguments,
                     tool_output=tool_result.content,

@@ -3,6 +3,7 @@ from typing import Protocol
 
 from app.providers.base import LLMMessage, LLMProvider
 from app.providers.prompt_safety import wrap_untrusted_content
+from app.agents.source_attribution import append_web_sources
 from app.tools.registry import ToolRegistry
 
 @dataclass(slots=True)
@@ -71,8 +72,13 @@ class SimplePlannerAgent:
             ),
         ]
         final_response = self.llm_provider.generate(final_messages)
+        answer = append_web_sources(
+            final_response.content,
+            first_response.tool_call.name,
+            tool_result.content,
+        )
         return PlannerResult(
-            answer=final_response.content,
+            answer=answer,
             tool_name=first_response.tool_call.name,
             tool_arguments=first_response.tool_call.arguments,
             tool_output=tool_result.content,

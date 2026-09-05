@@ -71,3 +71,43 @@ def test_planner_answers_directly_with_one_provider_call() -> None:
     assert result.answer == "Direct answer"
     assert result.tool_name is None
     assert len(provider.calls) == 1
+
+
+@dataclass
+class WebSearchTool:
+    name: str = "web_search"
+    description: str = "Search the web."
+    parameters: dict = None
+
+    def __post_init__(self) -> None:
+        self.parameters = {
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        }
+
+    def execute(self, arguments: dict) -> ToolResult:
+        return ToolResult(
+            content=(
+                "Web Search Results:\n"
+                "1. [Example News](https://example.com/news)\nLatest details."
+            )
+        )
+
+
+def test_planner_appends_sources_for_web_search_tool() -> None:
+    provider = ScriptedProvider(
+        responses=[
+            LLMResponse(content="", tool_call=LLMToolCall(name="web_search", arguments={"query": "latest"})),
+            LLMResponse(content="The latest details are available."),
+        ]
+    )
+    planner = SimplePlannerAgent(llm_provider=provider, tools=ToolRegistry([WebSearchTool()]))
+
+    result = planner.run("Find latest details")
+
+    assert result.answer == (
+        "The latest details are available.\n\n"
+        "Sources:\n"
+        "1. [Example News](https://example.com/news)"
+    )

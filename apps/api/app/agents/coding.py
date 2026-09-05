@@ -1,4 +1,5 @@
 from app.agents.planner import PlannerResult
+from app.agents.source_attribution import append_web_sources
 from app.providers.base import LLMMessage, LLMProvider
 from app.providers.prompt_safety import wrap_untrusted_content
 from app.tools.registry import ToolRegistry
@@ -59,9 +60,14 @@ class CodingAgent:
             ),
         ]
         final_response = self.llm_provider.generate(follow_up_messages)
+        answer = append_web_sources(
+            final_response.content,
+            first_response.tool_call.name,
+            tool_result.content,
+        )
 
         return PlannerResult(
-            answer=final_response.content,
+            answer=answer,
             agent_name=self.name,
             tool_name=first_response.tool_call.name,
             tool_arguments=first_response.tool_call.arguments,

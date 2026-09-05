@@ -19,6 +19,39 @@ _DISCLAIMER_MARKERS = (
     "no real-time data",
 )
 
+_WEB_REQUEST_MARKERS = (
+    "web search",
+    "search the web",
+    "search online",
+    "browse",
+    "look up",
+    "latest",
+    "recent",
+    "current",
+    "today",
+    "news",
+    "live",
+    "price",
+    "weather",
+    "stock",
+)
+
+_LOCAL_KNOWLEDGE_MARKERS = (
+    "uploaded",
+    "my document",
+    "my docs",
+    "my notes",
+    "knowledge base",
+    "rag",
+)
+
+
+def _looks_like_web_request(user_input: str) -> bool:
+    text = user_input.lower()
+    if any(marker in text for marker in _LOCAL_KNOWLEDGE_MARKERS):
+        return False
+    return any(marker in text for marker in _WEB_REQUEST_MARKERS)
+
 
 class AgentGraphState(TypedDict, total=False):
     user_input: str
@@ -189,6 +222,9 @@ class MultiAgentGraph(PlannerAgent):
             content = content.split(":", 1)[1].strip()
 
         if any(marker in content_lower for marker in _DISCLAIMER_MARKERS):
+            return {"route": "research", "thought_process": thought}
+
+        if _looks_like_web_request(state["user_input"]):
             return {"route": "research", "thought_process": thought}
 
         return {
