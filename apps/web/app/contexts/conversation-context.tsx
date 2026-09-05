@@ -16,6 +16,12 @@ import { useWorkspace } from "./workspace-context";
 import { useUi } from "./ui-context";
 import { useApiKeys } from "./api-keys-context";
 import { pollJob } from "../hooks/use-job-poller";
+import {
+  deleteConversationImages,
+  loadMessageImages,
+  saveMessageImages,
+  type LocalMessageImage,
+} from "../lib/local-image-previews";
 import toast from "react-hot-toast";
 
 export type Conversation = {
@@ -50,12 +56,7 @@ export type Message = {
   execution_steps?: ExecutionStep[];
 };
 
-export type ChatImageInput = {
-  mime_type: string;
-  data: string;
-  preview_url?: string;
-  name?: string;
-};
+export type ChatImageInput = LocalMessageImage;
 
 export type SuggestionCard = {
   title: string;
@@ -277,8 +278,17 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
 
       // Deduplicate by id — prevents React duplicate-key warning when poll
       // fires while an optimistically-appended message is still in state.
+      const imageEntries = await Promise.all(
+        processedData.map(async (msg) => [msg.id, await loadMessageImages(conversationId, msg.id)] as const)
+      );
+      const imagesByMessageId = new Map(imageEntries.filter(([, images]) => images.length > 0));
+      const hydratedData = processedData.map((msg) => {
+        const images = imagesByMessageId.get(msg.id);
+        return images ? { ...msg, images } : msg;
+      });
+
       setMessages((prev) => {
-        const incoming = processedData;
+        const incoming = hydratedData;
         const seen = new Set<string>();
         const merged: typeof incoming = [];
         for (const m of incoming) {
@@ -323,6 +333,7 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
   const deleteConversation = async (conversationId: string) => {
     try {
       await api(`/conversations/${conversationId}`, { method: "DELETE" });
+      await deleteConversationImages(conversationId);
       setConversations((prev) => prev.filter((c) => c.id !== conversationId));
       if (activeConversationId === conversationId) {
         setActiveConversationId(null);
@@ -436,6 +447,9 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
       );
 
       const jobId = response.job_id;
+      if (images.length > 0) {
+        await saveMessageImages(targetId, response.user_message.id, images);
+      }
 
       // Optimistically add user message returned from backend (deduped by ID)
       setMessages((prev) => {
