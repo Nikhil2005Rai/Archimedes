@@ -147,7 +147,7 @@ def run_chat_agent_job(payload: dict) -> dict:
 
     if has_images:
         if queue and job_id:
-            queue.add_execution_step(job_id, "vision", "Gemini analyzing image input...", "running")
+            queue.add_execution_step(job_id, "vision", "Archimedes analyzing image input...", "running")
         try:
             vision_messages = [
                 LLMMessage(
