@@ -160,6 +160,43 @@ def test_create_list_send_message_and_persist_assistant_reply(
     assert messages.json()[1]["content"] == "Fake assistant reply"
 
 
+def test_send_message_accepts_image_only_payload_and_rejects_more_than_two_images(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.jobs.queue import JobQueue
+
+    fake_queue = JobQueue("http://fake", "fake")
+    fake_queue.client = FakeUpstashRedisClient()
+    monkeypatch.setattr("app.api.routes.conversations.build_job_queue", lambda: fake_queue)
+
+    create = client.post("/conversations", headers=auth_headers, json={"title": "Vision session"})
+    assert create.status_code == 201
+    conversation_id = create.json()["id"]
+
+    image = {"mime_type": "image/png", "data": "aGVsbG8="}
+    too_many = client.post(
+        f"/conversations/{conversation_id}/messages",
+        headers=auth_headers,
+        json={"content": "Describe these", "images": [image, image, image]},
+    )
+    assert too_many.status_code == 422
+
+    send = client.post(
+        f"/conversations/{conversation_id}/messages",
+        headers=auth_headers,
+        json={"images": [image]},
+    )
+    assert send.status_code == 202
+    assert send.json()["user_message"]["content"] == "[Image attached]"
+
+    job = fake_queue.dequeue("chat_agent_run")
+    assert job is not None
+    assert job.payload["content"] == "Please analyze the attached image(s)."
+    assert job.payload["images"] == [image]
+
+
 def test_send_message_logs_tool_call_when_provider_requests_tool(
     client: TestClient,
     auth_headers: dict[str, str],

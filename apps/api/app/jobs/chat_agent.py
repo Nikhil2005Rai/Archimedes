@@ -2,8 +2,9 @@ import json
 import logging
 
 from app.agents.graph import MultiAgentGraph
+from app.agents.planner import PlannerResult
 from app.agents.registry import build_agent_registry
-from app.auth.provider_resolution import resolve_active_provider_config, resolve_gemini_api_key
+from app.auth.provider_resolution import ResolvedProviderConfig, resolve_active_provider_config, resolve_gemini_api_key
 from app.cache.redis_client import build_redis_cache
 from app.conversations.caching import CachingConversationRepository
 from app.conversations.repository import ConversationRepository
@@ -11,7 +12,7 @@ from app.core.config import settings
 from app.db import SessionLocal, get_engine
 from app.jobs.queue import build_job_queue
 from app.infrastructure.models import UserModel
-from app.providers.base import LLMGenerationError, LLMMessage
+from app.providers.base import LLMGenerationError, LLMImage, LLMMessage
 from app.providers.caching import CachingLLMProvider
 from app.providers.embeddings.errors import EmbeddingError
 from app.providers.embeddings.gemini import GeminiEmbeddingProvider
@@ -39,13 +40,19 @@ def _add_failure_message(conversation_id: str, content: str) -> None:
 
 
 def run_chat_agent_job(payload: dict) -> dict:
-    """payload: {"conversation_id": str, "user_id": str, "user_message_id": str, "content": str}"""
+    """payload: {"conversation_id": str, "user_id": str, "user_message_id": str, "content": str, "images"?: list}"""
     get_engine()
 
     conversation_id = payload["conversation_id"]
     user_id = payload["user_id"]
     user_message_id = payload["user_message_id"]
     content = payload["content"]
+    raw_images = payload.get("images") or []
+    images = [
+        LLMImage(mime_type=image["mime_type"], data=image["data"])
+        for image in raw_images
+    ]
+    has_images = len(images) > 0
     job_id = payload.get("job_id")
 
     cache = build_redis_cache()
@@ -72,16 +79,21 @@ def run_chat_agent_job(payload: dict) -> dict:
         ]
 
         try:
-            provider_config = resolve_active_provider_config(session, user_id, preferred_provider)
-        except ValueError as exc:
-            _add_failure_message(conversation_id, f"Request failed: LLM provider failed: {exc}")
-            raise ValueError(f"LLM provider failed: {exc}") from exc
-
-        try:
             gemini_key = resolve_gemini_api_key(session, user_id, preferred_provider)
         except ValueError as exc:
-            _add_failure_message(conversation_id, f"Request failed: {exc}")
-            raise ValueError(str(exc)) from exc
+            message = "Image input requires a Gemini API key; save one in BYOK settings." if has_images else str(exc)
+            _add_failure_message(conversation_id, f"Request failed: {message}")
+            raise ValueError(message) from exc
+
+        if has_images:
+            provider_config = ResolvedProviderConfig(provider_name="gemini", api_key=gemini_key)
+            preferred_model = preferred_model if preferred_provider == "gemini" else None
+        else:
+            try:
+                provider_config = resolve_active_provider_config(session, user_id, preferred_provider)
+            except ValueError as exc:
+                _add_failure_message(conversation_id, f"Request failed: LLM provider failed: {exc}")
+                raise ValueError(f"LLM provider failed: {exc}") from exc
 
         from app.auth.api_key_repository import UserApiKeyRepository
         db_key = UserApiKeyRepository(session).get_for_user_provider(user_id, "database")
@@ -116,33 +128,29 @@ def run_chat_agent_job(payload: dict) -> dict:
         conversation_id=conversation_id,
     )
 
-    agent_session = SessionLocal()
-    try:
-        if user_db_url:
-            try:
-                from sqlalchemy import create_engine
-                from sqlalchemy.orm import sessionmaker
-                user_engine = create_engine(user_db_url)
-                SessionLocalUser = sessionmaker(bind=user_engine)
-                user_db_session = SessionLocalUser()
-            except Exception:
-                logger.exception("Failed to connect to user's database")
-
-        agent = MultiAgentGraph(
-            llm_provider=llm_provider,
-            tools=build_tool_registry(agent_session, user_db_session=user_db_session),
-            agents=build_agent_registry(),
-            embedding_provider=embedding_provider,
-            retrieval_repository=RetrievalRepository(agent_session),
-            user_id=user_id,
-            workspace_id=workspace_id,
-        )
-
+    if has_images:
         if queue and job_id:
-            queue.add_execution_step(job_id, "planner", "Planner analyzing prompt...", "running")
-
+            queue.add_execution_step(job_id, "vision", "Gemini analyzing image input...", "running")
         try:
-            result = agent.run(user_input=content, history=history)
+            vision_messages = [
+                LLMMessage(
+                    role="system",
+                    content=(
+                        "You are Archimedes' Gemini vision path. Analyze the attached image(s) carefully "
+                        "and answer the user's request directly. If the user asks about visible text, "
+                        "transcribe it only as needed for the answer."
+                    ),
+                )
+            ]
+            if history:
+                vision_messages.extend(history[-12:])
+            vision_messages.append(LLMMessage(role="user", content=content, images=images))
+            response = llm_provider.generate(vision_messages)
+            result = PlannerResult(
+                answer=response.content,
+                agent_name="gemini",
+                thought_process=response.thought,
+            )
             if queue and job_id:
                 if result.thought_process:
                     queue.add_execution_step(
@@ -152,49 +160,105 @@ def run_chat_agent_job(payload: dict) -> dict:
                         "completed",
                         metadata={"thought": result.thought_process},
                     )
-                if result.agent_name:
-                    queue.add_execution_step(
-                        job_id,
-                        "specialist",
-                        f"Routed to {result.agent_name.capitalize()} Agent",
-                        "completed",
-                        metadata={"agent_name": result.agent_name},
-                    )
-                if result.tool_name:
-                    queue.add_execution_step(
-                        job_id,
-                        "tool",
-                        f"Executed tool `{result.tool_name}`",
-                        "completed",
-                        metadata={
-                            "tool_name": result.tool_name,
-                            "tool_arguments": result.tool_arguments,
-                            "tool_output": result.tool_output[:200] if result.tool_output else None,
-                        },
-                    )
+                queue.add_execution_step(
+                    job_id,
+                    "specialist",
+                    "Routed to Gemini Vision",
+                    "completed",
+                    metadata={"agent_name": "gemini"},
+                )
                 queue.add_execution_step(job_id, "finalize", "Finalized response", "completed")
         except LLMGenerationError as exc:
             if queue and job_id:
                 queue.add_execution_step(job_id, "error", f"LLM provider failed: {exc}", "failed")
             _add_failure_message(conversation_id, f"Request failed: LLM provider failed: {exc}")
             raise ValueError(f"LLM provider failed: {exc}") from exc
-        except EmbeddingError as exc:
-            if queue and job_id:
-                queue.add_execution_step(job_id, "error", f"Embedding provider failed: {exc}", "failed")
-            _add_failure_message(conversation_id, f"Request failed: Embedding provider failed: {exc}")
-            raise ValueError(f"Embedding provider failed: {exc}") from exc
         except Exception as exc:
             if queue and job_id:
                 queue.add_execution_step(job_id, "error", "An unexpected server error occurred.", "failed")
-            logger.exception("Unexpected error during agent execution")
+            logger.exception("Unexpected error during Gemini vision execution")
             _add_failure_message(conversation_id, "Request failed: An unexpected server error occurred.")
             raise ValueError("An unexpected server error occurred.") from exc
-    finally:
-        agent_session.close()
-        if user_db_session is not None:
-            user_db_session.close()
-        if user_engine is not None:
-            user_engine.dispose()
+    else:
+        agent_session = SessionLocal()
+        try:
+            if user_db_url:
+                try:
+                    from sqlalchemy import create_engine
+                    from sqlalchemy.orm import sessionmaker
+                    user_engine = create_engine(user_db_url)
+                    SessionLocalUser = sessionmaker(bind=user_engine)
+                    user_db_session = SessionLocalUser()
+                except Exception:
+                    logger.exception("Failed to connect to user's database")
+
+            agent = MultiAgentGraph(
+                llm_provider=llm_provider,
+                tools=build_tool_registry(agent_session, user_db_session=user_db_session),
+                agents=build_agent_registry(),
+                embedding_provider=embedding_provider,
+                retrieval_repository=RetrievalRepository(agent_session),
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
+
+            if queue and job_id:
+                queue.add_execution_step(job_id, "planner", "Planner analyzing prompt...", "running")
+
+            try:
+                result = agent.run(user_input=content, history=history)
+                if queue and job_id:
+                    if result.thought_process:
+                        queue.add_execution_step(
+                            job_id,
+                            "thinking",
+                            "Model Reasoning",
+                            "completed",
+                            metadata={"thought": result.thought_process},
+                        )
+                    if result.agent_name:
+                        queue.add_execution_step(
+                            job_id,
+                            "specialist",
+                            f"Routed to {result.agent_name.capitalize()} Agent",
+                            "completed",
+                            metadata={"agent_name": result.agent_name},
+                        )
+                    if result.tool_name:
+                        queue.add_execution_step(
+                            job_id,
+                            "tool",
+                            f"Executed tool `{result.tool_name}`",
+                            "completed",
+                            metadata={
+                                "tool_name": result.tool_name,
+                                "tool_arguments": result.tool_arguments,
+                                "tool_output": result.tool_output[:200] if result.tool_output else None,
+                            },
+                        )
+                    queue.add_execution_step(job_id, "finalize", "Finalized response", "completed")
+            except LLMGenerationError as exc:
+                if queue and job_id:
+                    queue.add_execution_step(job_id, "error", f"LLM provider failed: {exc}", "failed")
+                _add_failure_message(conversation_id, f"Request failed: LLM provider failed: {exc}")
+                raise ValueError(f"LLM provider failed: {exc}") from exc
+            except EmbeddingError as exc:
+                if queue and job_id:
+                    queue.add_execution_step(job_id, "error", f"Embedding provider failed: {exc}", "failed")
+                _add_failure_message(conversation_id, f"Request failed: Embedding provider failed: {exc}")
+                raise ValueError(f"Embedding provider failed: {exc}") from exc
+            except Exception as exc:
+                if queue and job_id:
+                    queue.add_execution_step(job_id, "error", "An unexpected server error occurred.", "failed")
+                logger.exception("Unexpected error during agent execution")
+                _add_failure_message(conversation_id, "Request failed: An unexpected server error occurred.")
+                raise ValueError("An unexpected server error occurred.") from exc
+        finally:
+            agent_session.close()
+            if user_db_session is not None:
+                user_db_session.close()
+            if user_engine is not None:
+                user_engine.dispose()
 
     # Phase 3: persist results with a fresh session/connection.
     write_session = SessionLocal()

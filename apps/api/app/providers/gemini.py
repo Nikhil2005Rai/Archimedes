@@ -134,7 +134,15 @@ class GeminiProvider(LLMProvider):
         contents = []
         for message in messages:
             role = "model" if message.role == "assistant" else "user"
-            contents.append({"role": role, "parts": [{"text": f"{message.role}: {message.content}"}]})
+            parts = [{"text": f"{message.role}: {message.content}"}]
+            for image in message.images or []:
+                parts.append({
+                    "inlineData": {
+                        "mimeType": image.mime_type,
+                        "data": image.data,
+                    }
+                })
+            contents.append({"role": role, "parts": parts})
         return contents
 
     @staticmethod

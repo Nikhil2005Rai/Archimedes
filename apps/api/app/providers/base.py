@@ -7,9 +7,16 @@ class LLMGenerationError(RuntimeError):
 
 
 @dataclass(slots=True)
+class LLMImage:
+    mime_type: str
+    data: str
+
+
+@dataclass(slots=True)
 class LLMMessage:
     role: str
     content: str
+    images: list[LLMImage] | None = None
 
 
 @dataclass(slots=True)

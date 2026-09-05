@@ -2,7 +2,7 @@ import pytest
 import httpx
 
 from app.core.config import settings
-from app.providers.base import LLMGenerationError, LLMMessage
+from app.providers.base import LLMGenerationError, LLMImage, LLMMessage
 from app.providers.gemini import GeminiProvider
 
 
@@ -63,6 +63,31 @@ def test_gemini_provider_uses_constructor_max_output_tokens(monkeypatch) -> None
 
     assert response.content == "ok"
     assert captured_payload["json"]["generationConfig"]["maxOutputTokens"] == 512
+
+
+def test_gemini_provider_sends_inline_image_parts(monkeypatch) -> None:
+    captured_payload = {}
+
+    def fake_post(url: str, json: dict, timeout: int):
+        captured_payload["json"] = json
+        return FakeGeminiResponse({"candidates": [{"content": {"parts": [{"text": "image answer"}]}}]})
+
+    monkeypatch.setattr("app.providers.gemini.httpx.post", fake_post)
+
+    response = GeminiProvider(api_key="gemini-key", model="gemini-3.5-flash").generate(
+        [
+            LLMMessage(
+                role="user",
+                content="Describe this",
+                images=[LLMImage(mime_type="image/png", data="aGVsbG8=")],
+            )
+        ]
+    )
+
+    assert response.content == "image answer"
+    parts = captured_payload["json"]["contents"][0]["parts"]
+    assert parts[0] == {"text": "user: Describe this"}
+    assert parts[1] == {"inlineData": {"mimeType": "image/png", "data": "aGVsbG8="}}
 
 
 def test_gemini_provider_raises_when_max_tokens_produces_no_answer(monkeypatch) -> None:

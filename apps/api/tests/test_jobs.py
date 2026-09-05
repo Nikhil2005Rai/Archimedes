@@ -245,6 +245,84 @@ def test_run_chat_agent_job_direct_answer(db_session: Session, monkeypatch: pyte
     assert messages[1].content == "Direct graph response"
 
 
+def test_run_chat_agent_job_with_images_forces_gemini_provider(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.jobs.chat_agent import run_chat_agent_job
+    from app.infrastructure.models import UserModel
+    from app.auth.api_key_repository import UserApiKeyRepository
+    from app.auth.encryption import EncryptionService
+    from app.conversations.repository import ConversationRepository
+    from app.providers.base import LLMResponse
+
+    user = UserModel(
+        id="chat-user-vision",
+        name="Test",
+        email="vision@example.com",
+        emailVerified=True,
+        createdAt=datetime.now(),
+        updatedAt=datetime.now(),
+        preferred_provider="nvidia",
+        preferred_model="meta/llama-3.1-70b-instruct",
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    UserApiKeyRepository(db_session).upsert(
+        user_id="chat-user-vision",
+        provider="gemini",
+        encrypted_key=EncryptionService().encrypt("fake-gemini-key"),
+    )
+    UserApiKeyRepository(db_session).upsert(
+        user_id="chat-user-vision",
+        provider="nvidia",
+        encrypted_key=EncryptionService().encrypt("fake-nvidia-key"),
+    )
+
+    repo = ConversationRepository(db_session)
+    conv = repo.create(user_id="chat-user-vision", title="Vision Chat")
+    user_msg = repo.add_message(conv.id, "user", "What is in this image?")
+
+    captured_build_kwargs = {}
+    captured_messages = []
+
+    class VisionProvider:
+        def generate(self, messages, tools=None):
+            captured_messages.extend(messages)
+            return LLMResponse(content="This image shows a test fixture.")
+
+    def fake_build_provider(**kwargs):
+        captured_build_kwargs.update(kwargs)
+        return VisionProvider()
+
+    monkeypatch.setattr("app.jobs.chat_agent.build_provider", fake_build_provider)
+    monkeypatch.setattr("app.jobs.chat_agent.GeminiEmbeddingProvider", lambda **kw: FakeEmbeddingProvider())
+    monkeypatch.setattr("app.jobs.chat_agent.SessionLocal", lambda: db_session)
+    monkeypatch.setattr("app.jobs.chat_agent.get_engine", lambda: db_session.bind)
+    monkeypatch.setattr("app.jobs.chat_agent.build_redis_cache", lambda: None)
+    monkeypatch.setattr("app.jobs.chat_agent.build_job_queue", lambda: None)
+
+    payload = {
+        "conversation_id": conv.id,
+        "user_id": "chat-user-vision",
+        "user_message_id": user_msg.id,
+        "content": "What is in this image?",
+        "images": [{"mime_type": "image/png", "data": "aGVsbG8="}],
+    }
+
+    result = run_chat_agent_job(payload)
+
+    assert captured_build_kwargs["provider_name"] == "gemini"
+    assert captured_build_kwargs["api_key"] == "fake-gemini-key"
+    assert captured_build_kwargs["model"] is None
+    assert captured_messages[-1].images is not None
+    assert captured_messages[-1].images[0].mime_type == "image/png"
+    assert captured_messages[-1].images[0].data == "aGVsbG8="
+    assert result["content"] == "This image shows a test fixture."
+    assert result["agent_name"] == "gemini"
+
+
 def test_run_chat_agent_job_closes_read_session_before_agent_run(
     db_session: Session,
     monkeypatch: pytest.MonkeyPatch,

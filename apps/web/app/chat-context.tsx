@@ -13,7 +13,7 @@ import {
 } from "./contexts/conversation-context";
 
 // Re-export types & constants so existing imports keep working
-export type { Conversation, Message, SuggestionCard } from "./contexts/conversation-context";
+export type { ChatImageInput, Conversation, Message, SuggestionCard } from "./contexts/conversation-context";
 export { suggestionCards } from "./contexts/conversation-context";
 export type { DocumentBase } from "./contexts/documents-context";
 export type { Workspace, WorkspaceMember } from "./contexts/workspace-context";

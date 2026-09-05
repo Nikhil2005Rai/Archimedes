@@ -112,10 +112,12 @@ def send_message(
     _require_conversation(repo, conversation_id)
 
     content = payload.content.strip()
+    images = [image.model_dump() for image in payload.images]
+    stored_content = content if content else "[Image attached]"
     user_message = repo.add_message(
         conversation_id=conversation_id,
         role="user",
-        content=content,
+        content=stored_content,
         user_id=current_user.id,
     )
 
@@ -123,7 +125,8 @@ def send_message(
         "conversation_id": conversation_id,
         "user_id": current_user.id,
         "user_message_id": user_message.id,
-        "content": content,
+        "content": content or "Please analyze the attached image(s).",
+        "images": images,
     }
 
     queue = build_job_queue()

@@ -27,6 +27,8 @@ import { useAuth } from "../contexts/auth-context";
 import { VoiceInput } from "../components/voice-input";
 import { ExportShareModal } from "../components/export-share-modal";
 import { WorkspaceMembersModal } from "../components/workspace-members-modal";
+import type { ChatImageInput } from "../chat-context";
+import toast from "react-hot-toast";
 
 const COMMANDS = [
   {
@@ -61,12 +63,36 @@ const COMMANDS = [
   }
 ];
 
+const MAX_IMAGE_ATTACHMENTS = 2;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const SUPPORTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+function readImageFile(file: File): Promise<ChatImageInput> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      const data = result.includes(",") ? result.split(",", 2)[1] : result;
+      resolve({
+        mime_type: file.type,
+        data,
+        preview_url: result,
+        name: file.name,
+      });
+    };
+    reader.onerror = () => reject(new Error("Could not read image file"));
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function ChatLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState(COMMANDS);
   const [suggestionsIndex, setSuggestionsIndex] = useState(0);
+  const [selectedImages, setSelectedImages] = useState<ChatImageInput[]>([]);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const handleInputChange = (val: string) => {
     setDraft(val);
@@ -116,6 +142,42 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
       const newCursorPos = newTextBefore.length;
       textarea.setSelectionRange(newCursorPos, newCursorPos);
     }, 10);
+  };
+
+  const handleImageFilesSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (files.length === 0) return;
+
+    const slotsLeft = MAX_IMAGE_ATTACHMENTS - selectedImages.length;
+    if (slotsLeft <= 0) {
+      toast.error("Only 2 images can be attached.");
+      return;
+    }
+
+    const accepted = files.slice(0, slotsLeft);
+    if (files.length > slotsLeft) {
+      toast.error("Only 2 images can be attached.");
+    }
+
+    const invalid = accepted.find((file) => !SUPPORTED_IMAGE_TYPES.has(file.type));
+    if (invalid) {
+      toast.error("Use PNG, JPEG, or WebP images.");
+      return;
+    }
+
+    const tooLarge = accepted.find((file) => file.size > MAX_IMAGE_BYTES);
+    if (tooLarge) {
+      toast.error("Each image must be 5 MB or smaller.");
+      return;
+    }
+
+    try {
+      const images = await Promise.all(accepted.map(readImageFile));
+      setSelectedImages((prev) => [...prev, ...images].slice(0, MAX_IMAGE_ATTACHMENTS));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not attach image.");
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -602,11 +664,15 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
           <form
             className="composer-container"
             onSubmit={(e) => {
+              e.preventDefault();
               setShowSuggestions(false);
-              void sendMessage(e);
+              const imagesForSubmit = selectedImages;
+              if (!draft.trim() && imagesForSubmit.length === 0) return;
+              setSelectedImages([]);
+              void sendMessage(undefined, undefined, undefined, imagesForSubmit);
             }}
           >
-            <div className="composer-box" style={{ position: "relative" }}>
+            <div className={`composer-box ${selectedImages.length > 0 ? "has-image-attachments" : ""}`} style={{ position: "relative" }}>
               {showSuggestions && suggestions.length > 0 && (
                 <div
                   style={{
@@ -657,31 +723,63 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                   </div>
                 </div>
               )}
-              <textarea
-                id="composer-textarea"
-                value={draft}
-                onChange={(event) => handleInputChange(event.target.value)}
-                placeholder="Type a new message here..."
-                disabled={isSending}
-                onKeyDown={handleKeyDown}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                multiple
+                hidden
+                onChange={handleImageFilesSelected}
               />
-              <div className="composer-toolbar-right">
-                <button type="button" className="composer-icon-btn" title="Add attachment">
-                  <Paperclip size={16} />
-                </button>
-                <button type="button" className="composer-icon-btn" title="Add emoji">
-                  <Smile size={16} />
-                </button>
-                <VoiceInput onTranscript={(text) => setDraft(draft ? `${draft} ${text}` : text)} />
-                <button
-                  type="submit"
-                  className="composer-send-btn"
-                  disabled={isSending || !draft.trim()}
-                  title="Send message"
-                  style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
-                >
-                  <SendHorizontal size={16} />
-                </button>
+              {selectedImages.length > 0 && (
+                <div className="composer-attachments-preview">
+                  {selectedImages.map((image, index) => (
+                    <div className="composer-image-chip" key={`${image.name || "image"}-${index}`}>
+                      <img src={image.preview_url} alt={image.name || `Attached image ${index + 1}`} />
+                      <button
+                        type="button"
+                        title="Remove image"
+                        onClick={() => setSelectedImages((prev) => prev.filter((_, imageIndex) => imageIndex !== index))}
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="composer-input-row">
+                <textarea
+                  id="composer-textarea"
+                  value={draft}
+                  onChange={(event) => handleInputChange(event.target.value)}
+                  placeholder="Type a new message here..."
+                  disabled={isSending}
+                  onKeyDown={handleKeyDown}
+                />
+                <div className="composer-toolbar-right">
+                  <button
+                    type="button"
+                    className="composer-icon-btn"
+                    title="Add image"
+                    disabled={isSending || selectedImages.length >= MAX_IMAGE_ATTACHMENTS}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <Paperclip size={16} />
+                  </button>
+                  <button type="button" className="composer-icon-btn" title="Add emoji">
+                    <Smile size={16} />
+                  </button>
+                  <VoiceInput onTranscript={(text) => setDraft(draft ? `${draft} ${text}` : text)} />
+                  <button
+                    type="submit"
+                    className="composer-send-btn"
+                    disabled={isSending || (!draft.trim() && selectedImages.length === 0)}
+                    title="Send message"
+                    style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
+                  >
+                    <SendHorizontal size={16} />
+                  </button>
+                </div>
               </div>
             </div>
             <div className="composer-actions">

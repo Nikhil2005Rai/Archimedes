@@ -210,6 +210,18 @@ export default function ChatSessionPage() {
                     <ChartRenderer jsonContent={message.tool_output} />
                   )}
 
+                  {!isAssistant && message.images && message.images.length > 0 && (
+                    <div className="message-image-grid">
+                      {message.images.map((image, index) => (
+                        <img
+                          key={`${image.name || "image"}-${index}`}
+                          src={image.preview_url || `data:${image.mime_type};base64,${image.data}`}
+                          alt={image.name || `Attached image ${index + 1}`}
+                        />
+                      ))}
+                    </div>
+                  )}
+
                   <div className="message-markdown">
                     {searchQuery.trim() && isMatch ? (
                       <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>

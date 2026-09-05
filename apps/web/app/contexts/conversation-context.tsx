@@ -37,6 +37,7 @@ export type Message = {
   id: string;
   role: string;
   content: string;
+  images?: ChatImageInput[];
   tool_name: string | null;
   tool_output?: string | null;
   agent_name?: string | null;
@@ -47,6 +48,13 @@ export type Message = {
   user_name?: string | null;
   user_email?: string | null;
   execution_steps?: ExecutionStep[];
+};
+
+export type ChatImageInput = {
+  mime_type: string;
+  data: string;
+  preview_url?: string;
+  name?: string;
 };
 
 export type SuggestionCard = {
@@ -105,7 +113,8 @@ type ConversationContextType = {
   sendMessage: (
     event?: FormEvent<HTMLFormElement>,
     textOverride?: string,
-    conversationIdOverride?: string
+    conversationIdOverride?: string,
+    imagesOverride?: ChatImageInput[]
   ) => Promise<void>;
 };
 
@@ -346,7 +355,8 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
   const sendMessage = async (
     event?: FormEvent<HTMLFormElement>,
     textOverride?: string,
-    conversationIdOverride?: string
+    conversationIdOverride?: string,
+    imagesOverride?: ChatImageInput[]
   ) => {
     if (event) event.preventDefault();
 
@@ -356,7 +366,9 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
     }
 
     const content = textOverride ?? draft;
-    if (!content.trim()) return;
+    const trimmedContent = content.trim();
+    const images = imagesOverride ?? [];
+    if (!trimmedContent && images.length === 0) return;
 
     if (sendingRef.current) return;
     sendingRef.current = true;
@@ -393,7 +405,8 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
         currentConv.title.toLowerCase().startsWith("new chat") ||
         messages.length === 0
       ) {
-        const autoTitle = content.trim().slice(0, 30) + (content.trim().length > 30 ? "..." : "");
+        const titleSource = trimmedContent || "Image request";
+        const autoTitle = titleSource.slice(0, 30) + (titleSource.length > 30 ? "..." : "");
         void renameConversation(targetId, autoTitle);
       }
 
@@ -404,18 +417,21 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
         {
           id: userMsgId,
           role: "user",
-          content: content.trim(),
+          content: trimmedContent || "[Image attached]",
+          images,
           tool_name: null,
           created_at: new Date().toISOString(),
         },
       ]);
+
+      const requestImages = images.map(({ mime_type, data }) => ({ mime_type, data }));
 
       // Post message and retrieve job details
       const response = await api<{ job_id: string; status: string; user_message: Message; assistant_message?: Message | null }>(
         `/conversations/${targetId}/messages`,
         {
           method: "POST",
-          body: JSON.stringify({ content: content.trim() }),
+          body: JSON.stringify({ content: trimmedContent, images: requestImages }),
         }
       );
 
@@ -428,7 +444,7 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
         }
         return [
           ...prev.filter((m) => m.id !== userMsgId),
-          response.user_message,
+          { ...response.user_message, images },
         ];
       });
 
