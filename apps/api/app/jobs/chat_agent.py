@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 
 from app.agents.graph import MultiAgentGraph
 from app.agents.planner import PlannerResult
@@ -23,6 +24,22 @@ from app.tools.registry import build_tool_registry
 from app.tools.repository import ToolCallRepository
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_vision_answer_format(answer: str) -> str:
+    """Convert common Gemini vision LaTeX unit snippets into plain Markdown text."""
+    def replace_math_span(match: re.Match[str]) -> str:
+        text = match.group(1)
+        text = re.sub(r"\\text\{([^}]*)\}", r"\1", text)
+        text = re.sub(r"\\mathrm\{([^}]*)\}", r"\1", text)
+        text = text.replace(r"\ ^\circ", " \u00b0")
+        text = text.replace(r"^\circ", "\u00b0")
+        text = text.replace(r"\circ", "\u00b0")
+        text = text.replace(r"\,", " ")
+        text = text.replace("\\", "")
+        return text
+
+    return re.sub(r"\$([^$]+)\$", replace_math_span, answer)
 
 
 def _add_failure_message(conversation_id: str, content: str) -> None:
@@ -138,7 +155,8 @@ def run_chat_agent_job(payload: dict) -> dict:
                     content=(
                         "You are Archimedes' Gemini vision path. Analyze the attached image(s) carefully "
                         "and answer the user's request directly. If the user asks about visible text, "
-                        "transcribe it only as needed for the answer."
+                        "transcribe it only as needed for the answer. Use plain Markdown text, not LaTeX "
+                        "or math delimiters. Write units plainly, for example 348 \u00b0C and 340-355 \u00b0C."
                     ),
                 )
             ]
@@ -147,7 +165,7 @@ def run_chat_agent_job(payload: dict) -> dict:
             vision_messages.append(LLMMessage(role="user", content=content, images=images))
             response = llm_provider.generate(vision_messages)
             result = PlannerResult(
-                answer=response.content,
+                answer=_normalize_vision_answer_format(response.content),
                 agent_name="gemini",
                 thought_process=response.thought,
             )

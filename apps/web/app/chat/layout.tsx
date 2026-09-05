@@ -18,7 +18,6 @@ import {
   AlertTriangle,
   Search,
   Paperclip,
-  Smile,
   SendHorizontal,
   Share2,
   Users,
@@ -765,9 +764,6 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                     onClick={() => fileInputRef.current?.click()}
                   >
                     <Paperclip size={16} />
-                  </button>
-                  <button type="button" className="composer-icon-btn" title="Add emoji">
-                    <Smile size={16} />
                   </button>
                   <VoiceInput onTranscript={(text) => setDraft(draft ? `${draft} ${text}` : text)} />
                   <button

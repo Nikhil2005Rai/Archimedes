@@ -323,6 +323,20 @@ def test_run_chat_agent_job_with_images_forces_gemini_provider(
     assert result["agent_name"] == "gemini"
 
 
+def test_vision_answer_format_normalizes_latex_units() -> None:
+    from app.jobs.chat_agent import _normalize_vision_answer_format
+
+    answer = (
+        "Based on the report, the **Reactor Temperature** is **$348\\ ^\\circ\\text{C}$** "
+        "(normal range of $340\\text{–}355\\ ^\\circ\\text{C}$)."
+    )
+
+    assert _normalize_vision_answer_format(answer) == (
+        "Based on the report, the **Reactor Temperature** is **348 \u00b0C** "
+        "(normal range of 340–355 \u00b0C)."
+    )
+
+
 def test_run_chat_agent_job_closes_read_session_before_agent_run(
     db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
