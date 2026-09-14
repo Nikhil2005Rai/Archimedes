@@ -3,14 +3,16 @@ import re
 
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 _SOURCES_HEADING_RE = re.compile(r"(^|\n)#{0,3}\s*sources\s*:?", re.IGNORECASE)
+_SOURCE_LINK_RE = re.compile(r"(^|\n)#{0,3}\s*sources\s*:?.*?\[[^\]]+\]\(https?://[^)\s]+\)", re.IGNORECASE | re.DOTALL)
 _WEB_SEARCH_TOOL_NAMES = ("web_search", "google_search", "search_web", "internet_search", "tavily_search", "bing_search")
 
 
 def append_web_sources(answer: str, tool_name: str | None, tool_output: str | None, max_sources: int = 5) -> str:
     if not tool_name or not any(name in tool_name for name in _WEB_SEARCH_TOOL_NAMES) or not tool_output:
         return answer
-    if _SOURCES_HEADING_RE.search(answer):
+    if _SOURCE_LINK_RE.search(answer):
         return answer
+    answer = re.sub(r"(\n\s*)+#{0,3}\s*sources\s*:?\s*$", "", answer.rstrip(), flags=re.IGNORECASE)
 
     sources = _extract_sources(tool_output, max_sources=max_sources)
     if not sources:

@@ -313,7 +313,7 @@ def run_chat_agent_job(payload: dict) -> dict:
             "role": assistant_message.role,
             "content": assistant_message.content,
             "tool_name": assistant_message.tool_name,
-            "tool_output": assistant_message.tool_output,
+            "tool_output": result.tool_output,
             "created_at": assistant_message.created_at.isoformat(),
             "agent_name": result.agent_name,
             "tool_arguments": result.tool_arguments,

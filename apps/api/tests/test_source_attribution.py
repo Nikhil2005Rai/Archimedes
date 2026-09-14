@@ -26,6 +26,17 @@ def test_append_web_sources_does_not_duplicate_existing_sources() -> None:
     assert append_web_sources(answer, "web_search", tool_output) == answer
 
 
+def test_append_web_sources_replaces_empty_sources_heading() -> None:
+    answer = "Final answer.\n\nSources:"
+    tool_output = "1. [First Source](https://example.com/a)\nAlpha"
+
+    assert append_web_sources(answer, "web_search", tool_output) == (
+        "Final answer.\n\n"
+        "Sources:\n"
+        "1. [First Source](https://example.com/a)"
+    )
+
+
 def test_append_web_sources_ignores_non_web_tools() -> None:
     tool_output = "1. [First Source](https://example.com/a)\nAlpha"
 

@@ -245,6 +245,74 @@ def test_run_chat_agent_job_direct_answer(db_session: Session, monkeypatch: pyte
     assert messages[1].content == "Direct graph response"
 
 
+def test_run_chat_agent_job_result_includes_tool_output_for_polling(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.jobs.chat_agent import run_chat_agent_job
+    from app.infrastructure.models import UserModel
+    from app.auth.api_key_repository import UserApiKeyRepository
+    from app.auth.encryption import EncryptionService
+    from app.conversations.repository import ConversationRepository
+    from app.agents.planner import PlannerResult
+
+    user = UserModel(
+        id="chat-user-web-output",
+        name="Test",
+        email="web-output@example.com",
+        emailVerified=True,
+        createdAt=datetime.now(),
+        updatedAt=datetime.now(),
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    UserApiKeyRepository(db_session).upsert(
+        user_id="chat-user-web-output",
+        provider="gemini",
+        encrypted_key=EncryptionService().encrypt("fake-key"),
+    )
+
+    repo = ConversationRepository(db_session)
+    conv = repo.create(user_id="chat-user-web-output", title="Web output")
+    user_msg = repo.add_message(conv.id, "user", "Search latest AI news")
+
+    tool_output = "Web Search Results:\n1. [Live Source](https://example.com/live)\nLatest details."
+
+    class WebSearchGraph:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def run(self, user_input, history=None):
+            return PlannerResult(
+                answer="Here is the latest answer.\n\nSources:\n1. [Live Source](https://example.com/live)",
+                tool_name="web_search",
+                tool_arguments={"query": "latest AI news"},
+                tool_output=tool_output,
+                agent_name="research",
+            )
+
+    monkeypatch.setattr("app.jobs.chat_agent.SessionLocal", lambda: db_session)
+    monkeypatch.setattr("app.jobs.chat_agent.get_engine", lambda: db_session.bind)
+    monkeypatch.setattr("app.jobs.chat_agent.build_provider", lambda **kw: object())
+    monkeypatch.setattr("app.jobs.chat_agent.GeminiEmbeddingProvider", lambda **kw: FakeEmbeddingProvider())
+    monkeypatch.setattr("app.jobs.chat_agent.MultiAgentGraph", WebSearchGraph)
+    monkeypatch.setattr("app.jobs.chat_agent.build_redis_cache", lambda: None)
+    monkeypatch.setattr("app.jobs.chat_agent.build_job_queue", lambda: None)
+
+    result = run_chat_agent_job({
+        "conversation_id": conv.id,
+        "user_id": "chat-user-web-output",
+        "user_message_id": user_msg.id,
+        "content": "Search latest AI news",
+    })
+
+    assert result["tool_name"] == "web_search"
+    assert result["tool_arguments"] == {"query": "latest AI news"}
+    assert result["tool_output"] == tool_output
+    assert "Sources:" in result["content"]
+
+
 def test_run_chat_agent_job_with_images_forces_gemini_provider(
     db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
