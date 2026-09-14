@@ -7,6 +7,9 @@ services:
     restart: always
     env_file:
       - .env
+    environment:
+      INNGEST_API_BASE_URL: http://inngest:8288
+      INNGEST_EVENT_API_BASE_URL: http://inngest:8288
     ports:
       - "8000:8000"
     command: >
@@ -20,5 +23,17 @@ services:
     env_file:
       - .env
     command: python -m app.worker
+    depends_on:
+      - api
+
+  # Inngest local server for durable background functions
+  inngest:
+    image: node:22-alpine
+    container_name: ai_os_inngest
+    restart: always
+    command: >
+      sh -c "npx --yes inngest-cli@latest dev --no-discovery -u http://api:8000/api/inngest"
+    ports:
+      - "8288:8288"
     depends_on:
       - api

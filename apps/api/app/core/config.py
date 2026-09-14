@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     inngest_event_key: str = ""
     inngest_signing_key: str = ""
     inngest_is_dev: bool = True
+    inngest_api_base_url: str = ""
+    inngest_event_api_base_url: str = ""
     frontend_origin: str = "http://localhost:3000"
     encryption_key: str = ""       # deprecated single-key fallback, still supported
     encryption_keys: str = ""      # comma-separated, newest/primary key first
