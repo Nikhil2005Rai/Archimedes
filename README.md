@@ -179,6 +179,32 @@ Open:
 http://localhost:3000
 ```
 
+## Deploy on Render Free
+
+The repository includes `render.yaml` for the FastAPI API service. Keep the
+frontend deployed on Vercel.
+
+Before deploying, create or connect:
+
+- A PostgreSQL database with the `vector` extension, such as Neon.
+- An Upstash Redis database for job state and queue fallback.
+- An Inngest Cloud app for production background execution.
+
+After the services are created, set these values in Render:
+
+1. API `DATABASE_URL`, `ENCRYPTION_KEYS`, `LLM_API_KEY`, Redis credentials, and
+    Inngest `INNGEST_EVENT_KEY`/`INNGEST_SIGNING_KEY`.
+2. In Vercel, set `NEXT_PUBLIC_API_URL` to the Render API service URL, for
+    example `https://ai-os-api.onrender.com`, and redeploy the frontend.
+3. API `FRONTEND_ORIGIN` to the Vercel production URL.
+4. In the Inngest Cloud dashboard, register the sync URL
+    `https://ai-os-api.onrender.com/api/inngest`.
+
+Render free web services sleep when idle, so the first request after inactivity
+may take several seconds. Do not deploy the local Inngest dev server or the
+Redis polling worker as Render free services; Inngest Cloud handles the
+background functions in production.
+
 ### Optional Worker Fallback
 
 If you are not running the Inngest dev server, run the Redis queue worker instead:
